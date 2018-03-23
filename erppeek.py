@@ -296,7 +296,11 @@ def issearchdomain(arg):
 def searchargs(params, kwargs=None, context=None):
     """Compute the 'search' parameters."""
     if not params:
-        return ([],)
+        return ([],
+                kwargs.pop('offset', 0),
+                kwargs.pop('limit', None),
+                kwargs.pop('order', None),
+                context)
     domain = params[0]
     if not isinstance(domain, list):
         return params
