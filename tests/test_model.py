@@ -4,6 +4,8 @@ from mock import sentinel, ANY
 import erppeek
 from ._common import XmlRpcTestCase, OBJ, callable
 
+PY2 = ('' == ''.encode())
+
 
 class TestCase(XmlRpcTestCase):
     server_version = '6.1'
@@ -69,9 +71,12 @@ class TestCase(XmlRpcTestCase):
             fields['many_ids'] = {'type': 'many2many', 'relation': 'foo.many'}
             return fields
         if method == 'name_get':
-            if 404 in args[5]:
+            ids = list(args[5])
+            if 404 in ids:
                 1 / 0
-            return [(res_id, 'name_%s' % res_id) for res_id in args[5]]
+            if 8888 in ids:
+                ids[ids.index(8888)] = b'\xdan\xeecode'.decode('latin-1')
+            return [(res_id, b'name_%s'.decode() % res_id) for res_id in ids]
         if method in ('create', 'copy'):
             return 1999
         return [sentinel.OTHER]
@@ -809,7 +814,11 @@ class TestRecord(TestCase):
         rec2 = self.model('foo.bar').get(42)
         rec3 = self.model('foo.bar').get(2)
         rec4 = self.model('foo.other').get(42)
-        records = self.model('foo.bar').browse([42])
+        records1 = self.model('foo.bar').browse([42])
+        records2 = self.model('foo.bar').browse([2, 4])
+        records3 = self.model('foo.bar').browse([2, 4])
+        records4 = self.model('foo.bar').browse([4, 2])
+        records5 = self.model('foo.other').browse([2, 4])
 
         self.assertEqual(rec1.id, rec2.id)
         self.assertEqual(rec1, rec2)
@@ -819,8 +828,11 @@ class TestRecord(TestCase):
         self.assertNotEqual(rec1, rec3)
         self.assertNotEqual(rec1, rec4)
 
-        self.assertEqual(records.id, [42])
-        self.assertNotEqual(rec1, records)
+        self.assertEqual(records1.id, [42])
+        self.assertNotEqual(rec1, records1)
+        self.assertEqual(records2, records3)
+        self.assertNotEqual(records2, records4)
+        self.assertNotEqual(records2, records5)
 
         # if client is different, records do not compare equal
         rec2.__dict__['_model'] = sentinel.OTHER_MODEL
@@ -917,6 +929,22 @@ class TestRecord(TestCase):
 
         self.assertCalls()
         self.assertOutput('')
+
+    def test_str_unicode(self):
+        rec4 = self.model('foo.bar').browse(8888)
+        expected_str = expected_unicode = 'name_\xdan\xeecode'
+        if PY2:
+            expected_unicode = expected_str.decode('latin-1')
+            expected_str = expected_unicode.encode('ascii', 'backslashreplace')
+            self.assertEqual(unicode(rec4), expected_unicode)
+        self.assertEqual(str(rec4), expected_str)
+        self.assertEqual(rec4._name, expected_unicode)
+        self.assertEqual(repr(rec4), "<Record 'foo.bar,8888'>")
+
+        self.assertCalls(
+            OBJ('foo.bar', 'fields_get_keys'),
+            OBJ('foo.bar', 'name_get', [8888]),
+        )
 
     def test_external_id(self):
         records = self.model('foo.bar').browse([13, 17])
