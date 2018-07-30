@@ -19,12 +19,12 @@ import traceback
 try:                    # Python 3
     import configparser
     from threading import current_thread
-    from xmlrpc.client import Fault, ServerProxy, MININT, MAXINT
+    from xmlrpc.client import Fault, ServerProxy, MININT, MAXINT, Transport, ProtocolError
     PY2 = False
 except ImportError:     # Python 2
     import ConfigParser as configparser
     from threading import currentThread as current_thread
-    from xmlrpclib import Fault, ServerProxy, MININT, MAXINT
+    from xmlrpclib import Fault, ServerProxy, MININT, MAXINT, Transport, ProtocolError
     PY2 = True
 
 
@@ -407,6 +407,58 @@ class Service(object):
             self.close()
 
 
+import requests
+class RequestsTransport(Transport):
+    """
+    Drop in Transport for xmlrpclib that uses Requests instead of httplib
+    """
+    # change our user agent to reflect Requests
+    user_agent = "erppeek + requests over python"
+
+    # override this if you'd like to https
+    use_https = False
+
+    def request(self, host, handler, request_body, verbose):
+        """
+        Make an xmlrpc request.
+        """
+        headers = {
+            'User-Agent': self.user_agent,
+        }
+        url = self._build_url(host, handler)
+        try:
+            resp = requests.post(url, data=request_body, headers=headers)
+        except ValueError:
+            raise
+        except Exception:
+            raise # something went wrong
+        else:
+            try:
+                resp.raise_for_status()
+            except requests.RequestException as e:
+                raise ProtocolError(url, resp.status_code, 
+                                                        str(e), resp.headers)
+            else:
+                return self.parse_response(resp)
+
+    def parse_response(self, resp):
+        """
+        Parse the xmlrpc response.
+        """
+        p, u = self.getparser()
+        p.feed(resp.text)
+        p.close()
+        return u.close()
+
+    def _build_url(self, host, handler):
+        """
+        Build a url for our request based on the host, handler and use_http
+        property
+        """
+        scheme = 'https' if self.use_https else 'http'
+        return '%s://%s/%s' % (scheme, host, handler)
+
+
 class Client(object):
     """Connection to an Odoo instance.
 
@@ -422,7 +474,7 @@ class Client(object):
     _config_file = os.path.join(os.curdir, CONF_FILE)
 
     def __init__(self, server, db=None, user=None, password=None,
-                 transport=None, verbose=False):
+                 transport=RequestsTransport(), verbose=False):
         if isinstance(server, list):
             appname = os.path.basename(__file__).rstrip('co')
             server = start_odoo_services(server, appname=appname)
