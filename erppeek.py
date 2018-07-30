@@ -424,6 +424,7 @@ class RequestsTransport(Transport):
         """
         headers = {
             'User-Agent': self.user_agent,
+            'Accept-Encoding': 'deflate',
         }
         url = self._build_url(host, handler)
         try:
